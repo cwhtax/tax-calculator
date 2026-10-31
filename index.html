@@ -24,8 +24,6 @@
     margin-bottom: 16px;
     box-shadow: 0 1px 3px rgba(0,0,0,0.04);
   }
-  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-  @media (max-width: 560px) { .grid2 { grid-template-columns: 1fr; } }
   label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
   .hint { font-weight: 400; color: #7b8794; font-size: 12px; }
   input[type="number"] {
@@ -45,6 +43,12 @@
     border-radius: 8px; cursor: pointer; transition: all .15s;
   }
   .toggle-row button.active { background: #2563eb; border-color: #2563eb; color: #fff; }
+  .yr-toggle button.active { background: #0f766e; border-color: #0f766e; }
+  .badge {
+    display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: .3px;
+    background: #fef3c7; color: #92400e; border: 1px solid #fde68a;
+    padding: 2px 8px; border-radius: 20px; margin-left: 6px; vertical-align: middle;
+  }
   .results { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 16px; }
   @media (max-width: 720px) { .results { grid-template-columns: 1fr; } }
   .res-card { border-radius: 12px; padding: 16px; border: 2px solid #e2e8f0; background:#fff; position: relative; }
@@ -84,9 +88,20 @@
 <body>
 <div class="wrap">
   <h1>Enterprise vs Sdn Bhd — Tax Comparison</h1>
-  <div class="sub">Malaysian resident — individual scale rates vs corporate rates (YA 2024 / YA 2025). Helps decide when to incorporate.</div>
+  <div class="sub">Malaysian resident — individual scale rates vs corporate rates. Compare YA 2026 against the YA 2027 Budget proposals to decide when to incorporate.</div>
 
   <div class="card">
+    <div class="field">
+      <label>Year of Assessment</label>
+      <div class="toggle-row yr-toggle" id="yrToggle">
+        <button data-yr="2026">YA 2026 (current)</button>
+        <button data-yr="2027" class="active">YA 2027 (Budget)</button>
+      </div>
+      <div class="hint" style="margin-top:8px">
+        YA 2027 reflects Budget 2027 (tabled 9 Oct 2026) proposals — <b>subject to the Finance Act / enactment</b>.
+      </div>
+    </div>
+
     <div class="field" style="margin-bottom:0">
       <label>Chargeable Income (RM)
         <span class="hint">— after all reliefs, deductions &amp; capital allowances</span>
@@ -117,7 +132,7 @@
     </div>
     <div class="res-card sme" id="cardSme">
       <div class="res-title">Sdn Bhd — SME</div>
-      <div class="res-note">15% / 17% / 24% bands. No personal reliefs at company level.</div>
+      <div class="res-note" id="smeNote">—</div>
       <div class="breakdown" id="smeBreak"></div>
       <div class="tax-total" id="smeTax">RM 0</div>
       <div class="eff" id="smeEff">0% effective</div>
@@ -139,65 +154,90 @@
   <div class="warn">
     <b>High-level comparison:</b> all three regimes are run on the same chargeable income (already net of reliefs, deductions
     &amp; capital allowances). It assumes profit stays in the company / is drawn as single-tier (tax-exempt) dividends and the
-    owner takes no salary. It excludes EPF/SOCSO, the 2% dividend tax on individual dividend income above RM100k (YA 2025),
-    audit/compliance costs, and CP204/CP500 mechanics. A full incorporation decision should weigh those plus salary-vs-dividend extraction.
+    owner takes no salary. It excludes EPF/SOCSO, the 2% dividend tax on individual dividend income above RM100k, audit/compliance
+    costs, and CP204/CP500 mechanics. YA 2027 figures are Budget proposals pending enactment. A full incorporation decision should
+    weigh those plus salary-vs-dividend extraction.
   </div>
 
   <div class="foot">
-    <b>Individual resident scale (YA 2024/2025):</b>
-    <table class="rates">
-      <tr><td>0–5,000: 0%</td><td>5,001–20,000: 1%</td><td>20,001–35,000: 3%</td><td>35,001–50,000: 6%</td></tr>
-      <tr><td>50,001–70,000: 11%</td><td>70,001–100,000: 19%</td><td>100,001–400,000: 25%</td><td>400,001–600,000: 26%</td></tr>
-      <tr><td>600,001–2,000,000: 28%</td><td>above 2,000,000: 30%</td><td></td><td></td></tr>
-    </table>
-    <b>SME corporate:</b> first RM150k @ 15% · RM150,001–600k @ 17% · balance @ 24%. &nbsp;<b>Non-SME:</b> flat 24%.<br>
-    Simplified estimate for comparison only — verify eligibility &amp; figures against ITA 1967 before relying on it.
+    <b>Rate reference — <span id="refYear">YA 2027</span>:</b>
+    <div id="rateRef"></div>
+    Simplified estimate for comparison only — verify eligibility &amp; figures against ITA 1967 and the Finance Act before relying on it.
   </div>
 </div>
 
 <script>
   var isSme = true;
+  var year = 2027;
 
   function fmt(n) { return 'RM ' + Math.round(n).toLocaleString('en-MY'); }
   function pct(t, base) { return base > 0 ? (t / base * 100).toFixed(2) + '%' : '0%'; }
 
-  // Individual resident progressive tax (YA 2024/2025)
-  var IND_BANDS = [
-    [5000, 0], [20000, 0.01], [35000, 0.03], [50000, 0.06], [70000, 0.11],
-    [100000, 0.19], [400000, 0.25], [600000, 0.26], [2000000, 0.28], [Infinity, 0.30]
-  ];
+  // Individual resident progressive scale [cumulative cap, rate]
+  var IND_BANDS = {
+    2026: [[5000,0],[20000,0.01],[35000,0.03],[50000,0.06],[70000,0.11],[100000,0.19],[400000,0.25],[600000,0.26],[2000000,0.28],[Infinity,0.30]],
+    2027: [[5000,0],[20000,0.01],[35000,0.03],[50000,0.06],[70000,0.11],[100000,0.18],[150000,0.24],[400000,0.25],[600000,0.26],[1000000,0.28],[Infinity,0.30]]
+  };
+  // SME two reduced bands; balance above 600k always 24%
+  var SME_RATES = { 2026: { b1: 0.15, b2: 0.17 }, 2027: { b1: 0.14, b2: 0.16 } };
+
   function indivTax(ci) {
-    var tax = 0, prev = 0;
-    for (var i = 0; i < IND_BANDS.length; i++) {
-      var cap = IND_BANDS[i][0], rate = IND_BANDS[i][1];
+    var bands = IND_BANDS[year], tax = 0, prev = 0;
+    for (var i = 0; i < bands.length; i++) {
+      var cap = bands[i][0], rate = bands[i][1];
       if (ci <= prev) break;
       tax += (Math.min(ci, cap) - prev) * rate;
       prev = cap;
     }
     return tax;
   }
-
+  function marginalInd(ci) {
+    var bands = IND_BANDS[year];
+    for (var i = 0; i < bands.length; i++) if (ci <= bands[i][0]) return (bands[i][1] * 100) + '%';
+    return '30%';
+  }
   function smeTax(ci) {
-    var t = Math.min(ci, 150000) * 0.15;
-    if (ci > 150000) t += Math.min(ci - 150000, 450000) * 0.17;
+    var r = SME_RATES[year];
+    var t = Math.min(ci, 150000) * r.b1;
+    if (ci > 150000) t += Math.min(ci - 150000, 450000) * r.b2;
     if (ci > 600000) t += (ci - 600000) * 0.24;
     return t;
   }
   function nonSmeTax(ci) { return ci * 0.24; }
 
   function smeRows(ci) {
-    var rows = '<div><span>First 150k @ 15%</span><span>' + fmt(Math.min(ci,150000)*0.15) + '</span></div>';
-    if (ci > 150000) rows += '<div><span>Next ' + Math.round(Math.min(ci-150000,450000)).toLocaleString('en-MY') + ' @ 17%</span><span>' + fmt(Math.min(ci-150000,450000)*0.17) + '</span></div>';
+    var r = SME_RATES[year];
+    var rows = '<div><span>First 150k @ ' + (r.b1*100) + '%</span><span>' + fmt(Math.min(ci,150000)*r.b1) + '</span></div>';
+    if (ci > 150000) rows += '<div><span>Next ' + Math.round(Math.min(ci-150000,450000)).toLocaleString('en-MY') + ' @ ' + (r.b2*100) + '%</span><span>' + fmt(Math.min(ci-150000,450000)*r.b2) + '</span></div>';
     if (ci > 600000) rows += '<div><span>Above 600k @ 24%</span><span>' + fmt((ci-600000)*0.24) + '</span></div>';
     return rows;
   }
 
   // Lowest chargeable income at which SME corporate tax undercuts individual tax
   function crossover() {
-    for (var p = 1000; p <= 2000000; p += 1000) {
-      if (smeTax(p) < indivTax(p)) return p;
-    }
+    for (var p = 1000; p <= 2000000; p += 1000) if (smeTax(p) < indivTax(p)) return p;
     return null;
+  }
+
+  function renderRef() {
+    var bands = IND_BANDS[year], prev = 0, cells = [];
+    for (var i = 0; i < bands.length; i++) {
+      var cap = bands[i][0], rate = bands[i][1] * 100, lbl;
+      if (cap === Infinity) lbl = 'above ' + prev.toLocaleString('en-MY');
+      else lbl = (prev === 0 ? '0' : (prev + 1).toLocaleString('en-MY')) + '–' + cap.toLocaleString('en-MY');
+      cells.push(lbl + ': ' + rate + '%');
+      prev = cap === Infinity ? prev : cap;
+    }
+    var html = '<table class="rates"><tr>';
+    for (var j = 0; j < cells.length; j++) {
+      html += '<td>' + cells[j] + '</td>';
+      if ((j + 1) % 4 === 0) html += '</tr><tr>';
+    }
+    html += '</tr></table>';
+    var r = SME_RATES[year];
+    html += '<b>SME corporate:</b> first RM150k @ ' + (r.b1*100) + '% · RM150,001–600k @ ' + (r.b2*100) + '% · balance @ 24%. &nbsp;<b>Non-SME:</b> flat 24%.';
+    document.getElementById('rateRef').innerHTML = html;
+    document.getElementById('refYear').textContent = 'YA ' + year;
   }
 
   function calc() {
@@ -206,8 +246,10 @@
     var ent = indivTax(profit);
     var sme = smeTax(profit);
     var non = nonSmeTax(profit);
+    var r = SME_RATES[year];
 
-    // All three run on the same chargeable income
+    document.getElementById('smeNote').textContent = (r.b1*100) + '% / ' + (r.b2*100) + '% / 24% bands. No personal reliefs at company level.';
+
     document.getElementById('entBreak').innerHTML =
       '<div><span>Chargeable income</span><span>' + fmt(profit) + '</span></div>' +
       '<div><span>Marginal rate</span><span>' + marginalInd(profit) + '</span></div>';
@@ -223,11 +265,9 @@
     document.getElementById('nonTax').textContent = fmt(non);
     document.getElementById('nonEff').textContent = pct(non, profit) + ' effective';
 
-    // Which corporate figure is relevant for the verdict
     var corp = isSme ? sme : non;
     var corpLabel = isSme ? 'Sdn Bhd (SME)' : 'Sdn Bhd (Non-SME)';
 
-    // Best (lowest) among the two live options: Enterprise vs the selected company type
     document.getElementById('cardEnt').classList.remove('best');
     document.getElementById('cardSme').classList.remove('best');
     document.getElementById('cardNon').classList.remove('best');
@@ -241,12 +281,11 @@
     tag.className = 'best-tag'; tag.textContent = 'LOWEST TAX';
     wc.appendChild(tag);
 
-    // Verdict text
     var diff = Math.abs(ent - corp);
     var big = document.getElementById('verdictBig');
     var small = document.getElementById('verdictSmall');
     if (profit === 0) {
-      big.textContent = 'Enter a profit figure to compare.';
+      big.textContent = 'Enter a chargeable income to compare.';
       small.textContent = '';
     } else if (entBetter) {
       big.textContent = 'Stay as Enterprise — saves ' + fmt(diff) + ' vs ' + corpLabel + '.';
@@ -256,20 +295,12 @@
       small.textContent = corpLabel + ' effective ' + pct(corp, profit) + ' vs Enterprise ' + pct(ent, profit) + '.';
     }
 
-    // Crossover hint (against SME rates, the usual incorporation trigger)
     var x = crossover();
     if (x && profit > 0) {
-      small.textContent += ' Break-even: SME corporate becomes cheaper than enterprise at about ' + fmt(x) + ' chargeable income.';
+      small.textContent += ' Break-even: SME corporate becomes cheaper than enterprise at about ' + fmt(x) + ' chargeable income (YA ' + year + ').';
     }
-  }
 
-  function marginalInd(ci) {
-    var prev = 0;
-    for (var i = 0; i < IND_BANDS.length; i++) {
-      if (ci <= IND_BANDS[i][0]) return (IND_BANDS[i][1] * 100) + '%';
-      prev = IND_BANDS[i][0];
-    }
-    return '30%';
+    renderRef();
   }
 
   document.getElementById('profit').addEventListener('input', calc);
@@ -278,6 +309,14 @@
       document.querySelectorAll('#smeToggle button').forEach(function(b){ b.classList.remove('active'); });
       btn.classList.add('active');
       isSme = btn.getAttribute('data-sme') === '1';
+      calc();
+    });
+  });
+  document.querySelectorAll('#yrToggle button').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      document.querySelectorAll('#yrToggle button').forEach(function(b){ b.classList.remove('active'); });
+      btn.classList.add('active');
+      year = parseInt(btn.getAttribute('data-yr'), 10);
       calc();
     });
   });
